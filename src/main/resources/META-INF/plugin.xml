@@ -1,0 +1,10 @@
+<idea-plugin>
+    <id>com.phpJSONViewer.phpjsontree</id>
+    <name>PHP JSON Tree Viewer</name>
+    <vendor>Você</vendor>
+    <description>View .json.php files protected by comments.</description>
+    <depends>com.intellij.modules.platform</depends>
+    <extensions defaultExtensionNs="com.intellij">
+        <fileEditorProvider implementation="com.phpJSONViewer.PhpJsonTreeEditorProvider"/>
+    </extensions>
+</idea-plugin>
