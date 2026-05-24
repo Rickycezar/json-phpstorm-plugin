@@ -12,22 +12,23 @@ import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.treeStructure.Tree
 import java.awt.Component
+import java.awt.GridLayout
+import java.awt.event.MouseAdapter
+import java.awt.event.MouseEvent
 import java.beans.PropertyChangeListener
-import javax.swing.JComponent
-import javax.swing.JTree
-import javax.swing.event.TreeModelEvent
-import javax.swing.event.TreeModelListener
+import javax.swing.*
 import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.DefaultTreeCellRenderer
 import javax.swing.tree.DefaultTreeModel
+import javax.swing.tree.TreePath
 
 class JsonTreeNode(
     var key: String,
     var value: String,
-    val isObject: Boolean,
-    val isArray: Boolean,
+    var isObject: Boolean,
+    var isArray: Boolean,
     val isRootNode: Boolean = false,
-    val inArray: Boolean = false
+    var inArray: Boolean = false
 ) : DefaultMutableTreeNode() {
 
     init {
@@ -40,15 +41,8 @@ class JsonTreeNode(
         return when {
             isObject -> if (isExpanded) "$prefix{}" else "$prefix{ ... }"
             isArray -> if (isExpanded) "$prefix[]" else "$prefix[ ... ]"
-            else -> "$prefix$value"
+            else -> "$prefix$value" // O valor já carrega as aspas se for String
         }
-    }
-
-    override fun toString(): String {
-        if (isRootNode) return "JSON Root"
-        if (isObject || isArray) return key
-        if (inArray) return value
-        return "$key: $value"
     }
 }
 
@@ -65,16 +59,14 @@ class PhpJsonTreeEditor(private val project: Project, private val file: VirtualF
             val element = JsonParser.parseString(jsonString)
             buildTreeNode(element, "Root", isRootNode = true)
         } catch (e: Exception) {
-            JsonTreeNode("Error", "Erro de Sintaxe no JSON: ${e.message}", false, false, true)
+            JsonTreeNode("Error", "Erro de Sintaxe: ${e.message}", false, false, true)
         }
 
         val model = DefaultTreeModel(rootNode)
         tree = Tree(model)
-        tree.isEditable = true
         tree.showsRootHandles = true
         tree.isRootVisible = false
-
-        tree.toggleClickCount = 0
+        tree.toggleClickCount = 0 // Expansão apenas clicando na seta, duplo clique é reservado para edição
 
         tree.cellRenderer = object : DefaultTreeCellRenderer() {
             override fun getTreeCellRendererComponent(
@@ -82,47 +74,140 @@ class PhpJsonTreeEditor(private val project: Project, private val file: VirtualF
                 leaf: Boolean, row: Int, hasFocus: Boolean
             ): Component {
                 val c = super.getTreeCellRendererComponent(tree, value, sel, expanded, leaf, row, hasFocus)
-                if (value is JsonTreeNode) {
-                    text = value.getDisplayText(expanded)
-                }
+                if (value is JsonTreeNode) text = value.getDisplayText(expanded)
                 return c
             }
         }
 
-        model.addTreeModelListener(object : TreeModelListener {
-            override fun treeNodesChanged(e: TreeModelEvent) {
-                val node = e.children?.get(0) as? JsonTreeNode ?: return
-                val newStr = node.userObject.toString()
-
-                if (node.isObject || node.isArray) {
-                    node.key = newStr
-                } else if (node.inArray) {
-                    node.value = newStr
-                } else {
-                    val parts = newStr.split(":", limit = 2)
-                    if (parts.size == 2) {
-                        node.key = parts[0].trim()
-                        node.value = parts[1].trim()
-                    } else {
-                        node.value = newStr.trim()
+        // Listener de Mouse para Duplo Clique e Botão Direito
+        tree.addMouseListener(object : MouseAdapter() {
+            override fun mouseClicked(e: MouseEvent) {
+                if (e.clickCount == 2) {
+                    val row = tree.getRowForLocation(e.x, e.y)
+                    if (row != -1) {
+                        tree.setSelectionRow(row)
+                        val node = tree.lastSelectedPathComponent as? JsonTreeNode ?: return
+                        showEditDialog(node)
                     }
                 }
-
-                node.userObject = node
-                saveToFile()
             }
 
-            override fun treeNodesInserted(e: TreeModelEvent?) {}
-            override fun treeNodesRemoved(e: TreeModelEvent?) {}
-            override fun treeStructureChanged(e: TreeModelEvent?) {}
+            override fun mousePressed(e: MouseEvent) { if (e.isPopupTrigger) showContextMenu(e) }
+            override fun mouseReleased(e: MouseEvent) { if (e.isPopupTrigger) showContextMenu(e) }
         })
 
         panel = JBScrollPane(tree)
+        for (i in 0 until tree.rowCount) tree.expandRow(i)
+    }
 
-        var i = 0
-        while (i < tree.rowCount) {
-            tree.expandRow(i)
-            i++
+    private fun showContextMenu(e: MouseEvent) {
+        val row = tree.getRowForLocation(e.x, e.y)
+        if (row == -1) return
+        tree.setSelectionRow(row)
+        val node = tree.lastSelectedPathComponent as? JsonTreeNode ?: return
+
+        val popup = JPopupMenu()
+
+        val editItem = JMenuItem("Editar Item")
+        editItem.addActionListener { showEditDialog(node) }
+        popup.add(editItem)
+
+        if (node.isObject || node.isArray || node.isRootNode) {
+            val addItem = JMenuItem("Adicionar Novo Índice/Valor")
+            addItem.addActionListener { showAddDialog(node) }
+            popup.add(addItem)
+        }
+
+        if (!node.isRootNode) {
+            val delItem = JMenuItem("Remover")
+            delItem.addActionListener {
+                val parent = node.parent as JsonTreeNode
+                parent.remove(node)
+                reindexArray(parent) // Reorganiza os índices [0], [1] se for um array
+                (tree.model as DefaultTreeModel).reload(parent)
+                saveToFile()
+            }
+            popup.add(delItem)
+        }
+
+        popup.show(tree, e.x, e.y)
+    }
+
+    private fun showEditDialog(node: JsonTreeNode) {
+        if (node.isRootNode) return
+        val dialogPanel = JPanel(GridLayout(0, 1))
+        val keyField = JTextField(node.key)
+        val valField = JTextField(node.value)
+
+        if (!node.inArray) {
+            dialogPanel.add(JLabel("Chave do Objeto:"))
+            dialogPanel.add(keyField)
+        }
+        if (!node.isObject && !node.isArray) {
+            dialogPanel.add(JLabel("Valor (Use \"\" para String, numérico sem aspas ou digite {}, []):"))
+            dialogPanel.add(valField)
+        }
+
+        val result = JOptionPane.showConfirmDialog(
+            tree, dialogPanel, "Editar Ponto",
+            JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE
+        )
+
+        if (result == JOptionPane.OK_OPTION) {
+            if (!node.inArray) node.key = keyField.text.trim()
+
+            if (!node.isObject && !node.isArray) {
+                val newVal = valField.text.trim()
+                when (newVal) {
+                    "{}" -> { node.isObject = true; node.value = "" }
+                    "[]" -> { node.isArray = true; node.value = "" }
+                    else -> node.value = newVal
+                }
+            }
+            (tree.model as DefaultTreeModel).nodeChanged(node)
+            saveToFile()
+        }
+    }
+
+    private fun showAddDialog(parentNode: JsonTreeNode) {
+        val dialogPanel = JPanel(GridLayout(0, 1))
+        val keyField = JTextField()
+        val valField = JTextField("\"\"")
+
+        if (!parentNode.isArray) {
+            dialogPanel.add(JLabel("Nova Chave:"))
+            dialogPanel.add(keyField)
+        }
+        dialogPanel.add(JLabel("Novo Valor (Use \"\" para String, numérico sem aspas, {} ou []):"))
+        dialogPanel.add(valField)
+
+        val result = JOptionPane.showConfirmDialog(
+            tree, dialogPanel, "Adicionar Ponto",
+            JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE
+        )
+
+        if (result == JOptionPane.OK_OPTION) {
+            val key = if (parentNode.isArray) parentNode.childCount.toString() else keyField.text.trim()
+            val v = valField.text.trim()
+
+            val isObj = v == "{}"
+            val isArr = v == "[]"
+            val finalVal = if (isObj || isArr) "" else v
+
+            val newNode = JsonTreeNode(key, finalVal, isObj, isArr, false, parentNode.isArray)
+            parentNode.add(newNode)
+
+            (tree.model as DefaultTreeModel).reload(parentNode)
+            tree.expandPath(TreePath(parentNode.path))
+            saveToFile()
+        }
+    }
+
+    private fun reindexArray(node: JsonTreeNode) {
+        if (node.isArray) {
+            for (i in 0 until node.childCount) {
+                (node.getChildAt(i) as JsonTreeNode).key = i.toString()
+            }
         }
     }
 
@@ -130,19 +215,16 @@ class PhpJsonTreeEditor(private val project: Project, private val file: VirtualF
         val node = JsonTreeNode(key, "", element.isJsonObject, element.isJsonArray, isRootNode, inArray)
         when {
             element.isJsonObject -> {
-                element.asJsonObject.entrySet().forEach { (k, v) ->
-                    node.add(buildTreeNode(v, k))
-                }
+                element.asJsonObject.entrySet().forEach { (k, v) -> node.add(buildTreeNode(v, k)) }
             }
             element.isJsonArray -> {
-                element.asJsonArray.forEachIndexed { index, v ->
-                    node.add(buildTreeNode(v, index.toString(), inArray = true))
-                }
+                element.asJsonArray.forEachIndexed { index, v -> node.add(buildTreeNode(v, index.toString(), inArray = true)) }
             }
             element.isJsonNull -> node.value = "null"
             else -> {
                 val p = element.asJsonPrimitive
-                node.value = if (p.isString) p.asString else p.toString()
+                // Se for String nativa, encapsulamos com aspas para exibição e edição no plugin
+                node.value = if (p.isString) "\"${p.asString}\"" else p.toString()
             }
         }
         return node
@@ -167,14 +249,21 @@ class PhpJsonTreeEditor(private val project: Project, private val file: VirtualF
                 return arr
             }
             else -> {
-                if (node.value == "null") return com.google.gson.JsonNull.INSTANCE
-                val v = node.value.removeSurrounding("\"")
+                val v = node.value.trim()
+                if (v == "null") return JsonNull.INSTANCE
 
-                return if (v == "true" || v == "false" || v.toDoubleOrNull() != null) {
-                    JsonParser.parseString(v)
-                } else {
-                    JsonPrimitive(v)
+                // Detecta aspas criadas pelo usuário para salvar estritamente como String
+                if (v.startsWith("\"") && v.endsWith("\"")) {
+                    return JsonPrimitive(v.substring(1, v.length - 1))
                 }
+
+                // Tipagem dinâmica para primitivos JSON
+                if (v == "true") return JsonPrimitive(true)
+                if (v == "false") return JsonPrimitive(false)
+                if (v.toDoubleOrNull() != null) return JsonParser.parseString(v)
+
+                // Fallback de segurança se o usuário esquecer as aspas em um texto puro
+                return JsonPrimitive(v)
             }
         }
     }
@@ -193,19 +282,3 @@ class PhpJsonTreeEditor(private val project: Project, private val file: VirtualF
         val newContent = content.replace(regex, "<?php /*$newJsonString*/ ?>")
 
         WriteCommandAction.runWriteCommandAction(project) {
-            document.setText(newContent)
-        }
-    }
-
-    override fun getComponent(): JComponent = panel
-    override fun getPreferredFocusedComponent(): JComponent? = panel
-    override fun getName(): String = "JSON Tree"
-    override fun getFile(): VirtualFile = file
-    override fun setState(state: FileEditorState) {}
-    override fun isModified(): Boolean = false
-    override fun isValid(): Boolean = true
-    override fun addPropertyChangeListener(listener: PropertyChangeListener) {}
-    override fun removePropertyChangeListener(listener: PropertyChangeListener) {}
-    override fun dispose() {}
-    override fun getCurrentLocation(): FileEditorLocation? = null
-}
