@@ -41,7 +41,7 @@ class JsonTreeNode(
         return when {
             isObject -> if (isExpanded) "$prefix{}" else "$prefix{ ... }"
             isArray -> if (isExpanded) "$prefix[]" else "$prefix[ ... ]"
-            else -> "$prefix$value" // O valor já carrega as aspas se for String
+            else -> "$prefix$value"
         }
     }
 }
@@ -59,14 +59,14 @@ class PhpJsonTreeEditor(private val project: Project, private val file: VirtualF
             val element = JsonParser.parseString(jsonString)
             buildTreeNode(element, "Root", isRootNode = true)
         } catch (e: Exception) {
-            JsonTreeNode("Error", "Erro de Sintaxe: ${e.message}", false, false, true)
+            JsonTreeNode("Error", "Erro de Sintaxe: " + e.message, false, false, true)
         }
 
         val model = DefaultTreeModel(rootNode)
         tree = Tree(model)
         tree.showsRootHandles = true
         tree.isRootVisible = false
-        tree.toggleClickCount = 0 // Expansão apenas clicando na seta, duplo clique é reservado para edição
+        tree.toggleClickCount = 0
 
         tree.cellRenderer = object : DefaultTreeCellRenderer() {
             override fun getTreeCellRendererComponent(
@@ -79,7 +79,6 @@ class PhpJsonTreeEditor(private val project: Project, private val file: VirtualF
             }
         }
 
-        // Listener de Mouse para Duplo Clique e Botão Direito
         tree.addMouseListener(object : MouseAdapter() {
             override fun mouseClicked(e: MouseEvent) {
                 if (e.clickCount == 2) {
@@ -123,7 +122,7 @@ class PhpJsonTreeEditor(private val project: Project, private val file: VirtualF
             delItem.addActionListener {
                 val parent = node.parent as JsonTreeNode
                 parent.remove(node)
-                reindexArray(parent) // Reorganiza os índices [0], [1] se for um array
+                reindexArray(parent)
                 (tree.model as DefaultTreeModel).reload(parent)
                 saveToFile()
             }
@@ -144,7 +143,7 @@ class PhpJsonTreeEditor(private val project: Project, private val file: VirtualF
             dialogPanel.add(keyField)
         }
         if (!node.isObject && !node.isArray) {
-            dialogPanel.add(JLabel("Valor (Use \"\" para String, numérico sem aspas ou digite {}, []):"))
+            dialogPanel.add(JLabel("Valor (Use \"\" para String, numerico sem aspas ou digite {}, []):"))
             dialogPanel.add(valField)
         }
 
@@ -178,7 +177,7 @@ class PhpJsonTreeEditor(private val project: Project, private val file: VirtualF
             dialogPanel.add(JLabel("Nova Chave:"))
             dialogPanel.add(keyField)
         }
-        dialogPanel.add(JLabel("Novo Valor (Use \"\" para String, numérico sem aspas, {} ou []):"))
+        dialogPanel.add(JLabel("Novo Valor (Use \"\" para String, numerico sem aspas, {}, []):"))
         dialogPanel.add(valField)
 
         val result = JOptionPane.showConfirmDialog(
@@ -223,8 +222,7 @@ class PhpJsonTreeEditor(private val project: Project, private val file: VirtualF
             element.isJsonNull -> node.value = "null"
             else -> {
                 val p = element.asJsonPrimitive
-                // Se for String nativa, encapsulamos com aspas para exibição e edição no plugin
-                node.value = if (p.isString) "\"${p.asString}\"" else p.toString()
+                node.value = if (p.isString) "\"" + p.asString + "\"" else p.toString()
             }
         }
         return node
@@ -252,17 +250,14 @@ class PhpJsonTreeEditor(private val project: Project, private val file: VirtualF
                 val v = node.value.trim()
                 if (v == "null") return JsonNull.INSTANCE
 
-                // Detecta aspas criadas pelo usuário para salvar estritamente como String
-                if (v.startsWith("\"") && v.endsWith("\"")) {
+                if (v.startsWith("\"") && v.endsWith("\"") && v.length >= 2) {
                     return JsonPrimitive(v.substring(1, v.length - 1))
                 }
 
-                // Tipagem dinâmica para primitivos JSON
                 if (v == "true") return JsonPrimitive(true)
                 if (v == "false") return JsonPrimitive(false)
                 if (v.toDoubleOrNull() != null) return JsonParser.parseString(v)
 
-                // Fallback de segurança se o usuário esquecer as aspas em um texto puro
                 return JsonPrimitive(v)
             }
         }
@@ -279,6 +274,22 @@ class PhpJsonTreeEditor(private val project: Project, private val file: VirtualF
 
         val content = document.text
         val regex = Regex("""<\?php\s*/\*(.*?)\*/\s*\?>""", RegexOption.DOT_MATCHES_ALL)
-        val newContent = content.replace(regex, "<?php /*$newJsonString*/ ?>")
+        val newContent = content.replace(regex, "<?php /*" + newJsonString + "*/ ?>")
 
         WriteCommandAction.runWriteCommandAction(project) {
+            document.setText(newContent)
+        }
+    }
+
+    override fun getComponent(): JComponent = panel
+    override fun getPreferredFocusedComponent(): JComponent? = panel
+    override fun getName(): String = "JSON Tree"
+    override fun getFile(): VirtualFile = file
+    override fun setState(state: FileEditorState) {}
+    override fun isModified(): Boolean = false
+    override fun isValid(): Boolean = true
+    override fun addPropertyChangeListener(listener: PropertyChangeListener) {}
+    override fun removePropertyChangeListener(listener: PropertyChangeListener) {}
+    override fun dispose() {}
+    override fun getCurrentLocation(): FileEditorLocation? = null
+}
