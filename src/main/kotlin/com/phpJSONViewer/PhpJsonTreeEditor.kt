@@ -262,19 +262,19 @@ class PhpJsonTreeEditor(private val project: Project, private val file: VirtualF
     }
 
     private fun saveToFile() {
-        val documentManager = FileDocumentManager.getInstance()
-        val document = documentManager.getDocument(file) ?: return
-
-        val rootNode = tree.model.root as JsonTreeNode
-        val jsonElement = buildJsonElement(rootNode)
-
-        val newJsonString = GsonBuilder().create().toJson(jsonElement)
-
-        val content = document.text
-        val regex = Regex("""<\?php\s*/\*(.*?)\*/\s*\?>""", RegexOption.DOT_MATCHES_ALL)
-        val newContent = content.replace(regex, "<?php /*" + newJsonString + "*/ ?>")
-
         WriteCommandAction.runWriteCommandAction(project) {
+            val documentManager = FileDocumentManager.getInstance()
+            val document = documentManager.getDocument(file) ?: return@runWriteCommandAction
+
+            val rootNode = tree.model.root as JsonTreeNode
+            val jsonElement = buildJsonElement(rootNode)
+
+            val newJsonString = GsonBuilder().create().toJson(jsonElement)
+
+            val content = document.text
+            val regex = Regex("""<\?php\s*/\*(.*?)\*/\s*\?>""", RegexOption.DOT_MATCHES_ALL)
+            val newContent = content.replace(regex, "<?php /*" + newJsonString + "*/ ?>")
+
             document.setText(newContent)
         }
     }
