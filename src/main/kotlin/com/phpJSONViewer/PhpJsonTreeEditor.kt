@@ -31,9 +31,7 @@ class JsonTreeNode(
     var inArray: Boolean = false
 ) : DefaultMutableTreeNode() {
 
-    init {
-        userObject = this
-    }
+    override fun toString(): String = getDisplayText(false)
 
     fun getDisplayText(isExpanded: Boolean): String {
         if (isRootNode) return "JSON Root"
@@ -59,7 +57,7 @@ class PhpJsonTreeEditor(private val project: Project, private val file: VirtualF
             val element = JsonParser.parseString(jsonString)
             buildTreeNode(element, "Root", isRootNode = true)
         } catch (e: Exception) {
-            JsonTreeNode("Error", "Erro de Sintaxe: " + e.message, false, false, true)
+            JsonTreeNode("Error", "Syntax Error: " + e.message, false, false, true)
         }
 
         val model = DefaultTreeModel(rootNode)
@@ -107,18 +105,18 @@ class PhpJsonTreeEditor(private val project: Project, private val file: VirtualF
 
         val popup = JPopupMenu()
 
-        val editItem = JMenuItem("Editar Item")
+        val editItem = JMenuItem("Edit Item")
         editItem.addActionListener { showEditDialog(node) }
         popup.add(editItem)
 
         if (node.isObject || node.isArray || node.isRootNode) {
-            val addItem = JMenuItem("Adicionar Novo Índice/Valor")
+            val addItem = JMenuItem("New index/Value")
             addItem.addActionListener { showAddDialog(node) }
             popup.add(addItem)
         }
 
         if (!node.isRootNode) {
-            val delItem = JMenuItem("Remover")
+            val delItem = JMenuItem("Remove")
             delItem.addActionListener {
                 val parent = node.parent as JsonTreeNode
                 parent.remove(node)
@@ -139,16 +137,16 @@ class PhpJsonTreeEditor(private val project: Project, private val file: VirtualF
         val valField = JTextField(node.value)
 
         if (!node.inArray) {
-            dialogPanel.add(JLabel("Chave do Objeto:"))
+            dialogPanel.add(JLabel("Key:"))
             dialogPanel.add(keyField)
         }
         if (!node.isObject && !node.isArray) {
-            dialogPanel.add(JLabel("Valor (Use \"\" para String, numerico sem aspas ou digite {}, []):"))
+            dialogPanel.add(JLabel("Value (\"string\", 1, false, null, {}, []):"))
             dialogPanel.add(valField)
         }
 
         val result = JOptionPane.showConfirmDialog(
-            tree, dialogPanel, "Editar Ponto",
+            tree, dialogPanel, "Edit Node",
             JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE
         )
 
@@ -174,14 +172,14 @@ class PhpJsonTreeEditor(private val project: Project, private val file: VirtualF
         val valField = JTextField("\"\"")
 
         if (!parentNode.isArray) {
-            dialogPanel.add(JLabel("Nova Chave:"))
+            dialogPanel.add(JLabel("New Key:"))
             dialogPanel.add(keyField)
         }
-        dialogPanel.add(JLabel("Novo Valor (Use \"\" para String, numerico sem aspas, {}, []):"))
+        dialogPanel.add(JLabel("New Value (\"string\", 1, false, null, {}, []):"))
         dialogPanel.add(valField)
 
         val result = JOptionPane.showConfirmDialog(
-            tree, dialogPanel, "Adicionar Ponto",
+            tree, dialogPanel, "Add Node",
             JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE
         )
 
